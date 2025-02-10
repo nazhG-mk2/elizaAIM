@@ -1,0 +1,18 @@
+{
+    "name": "Eliza social media bot",
+    "short_name": "eliza",
+    "version": "0.1",
+    "endpoints": [
+        {
+            "uri": "/health",
+            "input_methods": ["GET"],
+            "output": {"json": {"status": "ok"}},
+            "documentation": "Check the health of the service"
+        }
+        
+    ],
+    "documentation_url": "https://elizaos.github.io/eliza/docs/intro/",
+    "license": "Open",
+    "terms_of_service": "https://example.com",
+    "author": "nazhG"
+}

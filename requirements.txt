@@ -1,0 +1,2 @@
+-e git+https://github.com/hypercycle-development/pyhypercycle-aim.git#egg=pyhypercycle_aim
+httpx
