@@ -8,6 +8,8 @@ import os
 
 PORT = int(os.environ.get("PORT", 8000))
 
+SUBSCRIPTION_FILE = "./container_mount/subscription.json"
+
 class ElizaBot(SimpleServer):
     """
         health(request):
@@ -209,19 +211,23 @@ class ElizaBot(SimpleServer):
         months = body.get("months", 1)
         
         # get the current subscription
-        with open("subscription.json", "r") as f:
+        with open(SUBSCRIPTION_FILE, "r") as f:
             subscription = f.read()
         subscription = json.loads(subscription)
         
         # Update the subscription
         subscription["end"] = subscription.get("end", time.time()) + 60*60*24*30*months
         
+        costs = [{"currency": "ProcessingUnits","used": 1*months}]
+        
         # Save the subscription
-        with open("subscription.json", "w") as f:
+        with open(SUBSCRIPTION_FILE, "w") as f:
             f.write(json.dumps(subscription))
+            
+        return JSONResponseCORS({"status": "updated"}, costs)
     
     def check_subscription(self):
-        with open("subscription.json", "r") as f:
+        with open(SUBSCRIPTION_FILE, "r") as f:
             subscription = f.read()
         subscription = json.loads(subscription)
         if subscription.get("end") < time.time():
@@ -250,8 +256,8 @@ class ElizaBot(SimpleServer):
     async def subscription_check_loop(self):
         print("Subscription check loop started")
         # Create subscription file if not exists
-        if not os.path.exists("subscription.json"):
-            with open("subscription.json", "w") as f:
+        if not os.path.exists(SUBSCRIPTION_FILE):
+            with open(SUBSCRIPTION_FILE, "w") as f:
                 f.write("{}")
         # Main loop
         while True:
