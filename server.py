@@ -1,5 +1,6 @@
 from pyhypercycle_aim import SimpleServer, aim_uri, JSONResponseCORS, HTMLResponseCORS  # type: ignore
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import aiofiles
 import asyncio
 import httpx # type: ignore
 import json
@@ -142,60 +143,8 @@ class ElizaBot(SimpleServer):
         with open("./eliza.character.json", "r", encoding="utf-8") as f:
             agent = f.read()
         return JSONResponseCORS(agent, costs=[])
-    
-    # Set Login Credentials - Twitter/x
-    @aim_uri(uri="/account", methods=["POST"],
-        endpoint_manifest = {
-            "documentation": "Sets the account for the service",
-            "input_body": {"account": "<JSON>"},
-            "output": {"status":"<updated|error>"},
-            "example_call": {
-                "account": {
-                    "twitter": {
-                        "username": "username",
-                        "password": "password",
-                        "email": "email",
-                        "min": 1,
-                        "max": 1,
-                        "twofactor": "twofactor" # optional
-                    }
-                }
-            }
-    })
-    async def set_account(self, request):
-        body = await request.json()
-        account = body.get("account")
-        
-        if not account:
-            return JSONResponseCORS({"status": "error", "message": "account is required"}, costs=[])
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post("http://localhost:3000/credentials", json=account)
-            status = response.json()
-        return JSONResponseCORS(status, costs=[])
-        
-    # Set The API Key - GROQ
-    @aim_uri(uri="/set-api-key", methods=["POST"],
-        endpoint_manifest = {
-            "documentation": "Sets the api key for the service",
-            "input_body": {"GROQ_API_KEY": "<String>"},
-            "output": {"status":"<updated|error>"},
-            "example_call": {
-                "GROQ_API_KEY": "key"
-            }
-    })
-    async def set_api_key(self, request):
-        body = await request.json()
-        GROQ_API_KEY = body.get("GROQ_API_KEY")
-        
-        if not GROQ_API_KEY:
-            return JSONResponseCORS({"status": "error", "message": "GROQ_API_KEY is required"}, costs=[])
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post("http://localhost:3000/set-api-key", json=body)
-            status = response.json()
-        return JSONResponseCORS(status, costs=[])
-    
+
+    # Initialize the subscription check loop
     def startup_job(self):
         asyncio.create_task(self.subscription_check_loop())
         
@@ -209,30 +158,23 @@ class ElizaBot(SimpleServer):
         # Number of months to subscribe
         body = await request.json()
         months = body.get("months", 1)
+        user_address = self.get_user_address(request)
         
-        # get the current subscription
-        with open(SUBSCRIPTION_FILE, "r") as f:
-            subscription = f.read()
-        subscription = json.loads(subscription)
-        
-        # Update the subscription
-        subscription["end"] = subscription.get("end", time.time()) + 60*60*24*30*months
-        
-        costs = [{"currency": "ProcessingUnits","used": 1*months}]
-        
-        # Save the subscription
-        with open(SUBSCRIPTION_FILE, "w") as f:
-            f.write(json.dumps(subscription))
+        async with self.lock: # Lock the subscription file
+            try:
+                async with aiofiles.open(SUBSCRIPTION_FILE, "r") as f:
+                    content = await f.read()
+                    subscription = json.loads(content) if content else {}
+            except (FileNotFoundError, json.JSONDecodeError):
+                subscription = {}
+
+            subscription[user_address] = subscription.get(user_address, time.time()) + 60*60*24*30*months
+            costs = [{"currency": "ProcessingUnits","used": 1*months}]
+
+            async with aiofiles.open(SUBSCRIPTION_FILE, "w") as f:
+                await f.write(json.dumps(subscription))
             
-        return JSONResponseCORS({"status": "updated"}, costs)
-    
-    def check_subscription(self):
-        with open(SUBSCRIPTION_FILE, "r") as f:
-            subscription = f.read()
-        subscription = json.loads(subscription)
-        if subscription.get("end") < time.time():
-            return False
-        return
+        return JSONResponseCORS({"status": "updated", "end": subscription[user_address]}, costs)
         
     # Check Subscription
     @aim_uri(uri="/subscription", methods=["GET"],
@@ -251,6 +193,20 @@ class ElizaBot(SimpleServer):
         if not subscription:
             return JSONResponseCORS({"status": "error", "message": "Subscription is over"}, costs=[])
         return JSONResponseCORS(subscription, costs=[])
+
+    # Check if user.address is subscribed.        
+    def check_subscription(self, request):
+        user_address = self.get_user_address(request)
+
+        try:
+            with open(SUBSCRIPTION_FILE, "r") as f:
+                content = f.read()
+                subscription = json.loads(content) if content else {}
+        except (FileNotFoundError, json.JSONDecodeError):
+            subscription = {}
+
+        expiry = subscription.get(user_address, 0)
+        return expiry > time.time()
     
     # Check Subscription every hour
     async def subscription_check_loop(self):
